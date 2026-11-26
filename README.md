@@ -164,12 +164,25 @@ GPUs. [configs/README.md](configs/README.md) describes the three configs.
 
 #### Hardware
 
-The configs in `configs/train/` put a student rank and its own copy of the JoyAI-Image-Edit
-teacher on every training GPU, and were run on **B300** (288 GB) cards. A card with less memory
-cannot hold both. For **A100 (80 GB)** the configs in [`configs/train/a100/`](configs/train/a100)
-run the teacher on separate GPUs as a small TCP server (`runtime.teacher_gpus`); the student ranks
-call it for the teacher velocity at every rollout step. `i2vt <config>` starts the teacher servers,
-waits until they accept connections and then starts training; nothing else has to be launched.
+**If you have B300 (288 GB) cards**, use the configs in `configs/train/` as they are. They put a
+student rank and its own copy of the JoyAI-Image-Edit teacher on every GPU, which is how the
+released models were trained.
+
+**Without B300**, use the configs in [`configs/train/a100/`](configs/train/a100), made for A100
+(80 GB). An A100 cannot hold a student and the teacher together, so the teacher runs on separate
+GPUs as a small TCP server (`runtime.teacher_gpus`) and the student ranks call it for the teacher
+velocity at every rollout step. `i2vt <config>` starts the teacher servers, waits until they accept
+connections and then starts training; nothing else has to be launched. The result is the same
+recipe, but training is much slower:
+
+| Hardware | Time per step (48 samples) | 200 steps |
+|---|---|---|
+| 4 × B300, I2VT-CoF, our runs | about 80 s | about 4.5 hours |
+| 2 × A100 80 GB, I2VT-14B or I2VT-CoF (1 student + 1 teacher) | about 20 minutes | **about 60–65 hours** |
+| 4 × A100 80 GB (2 students + 2 teachers) | about 10 minutes, estimated | about 30–35 hours, estimated |
+
+The A100 times come from short test runs (0.04 samples/s per student) and the four-card row is
+extrapolated from them, not measured.
 
 | Cards | Config | Students + teachers | Accumulation | Status |
 |---|---|---|---|---|
@@ -198,8 +211,6 @@ Notes from the A100 runs:
   gradients.
 - The A100 I2VT-CoF configs turn on `student.gradient_checkpointing`; a 14B student without it
   runs out of memory in the first rollout.
-- Speed on two A100s (one student, one teacher): about 0.04 samples/s for both I2VT-14B and I2VT-CoF,
-  so one step of 48 samples takes around 20 minutes and the 200 steps around 65 hours. Four cards (two students) halve that.
 - I2VT-CoF needs the full `Wan2.1-T2V-14B` download, transformer shards included (about 65 GB). The
   T5/VAE-only subset suggested above is enough for the Bernini models but not for CoF. The
   `Bernini-R-Diffusers` download for I2VT-14B is about 107 GB.
