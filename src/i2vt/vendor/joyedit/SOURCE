@@ -1,0 +1,24 @@
+Upstream-Repository: https://github.com/jd-opensource/JoyAI-Image
+Upstream-Commit: afbdf55eaedb8ee5380620002fa4150c1bec1eed
+Weights: https://huggingface.co/jdopensource/JoyAI-Image-Edit
+License: Apache-2.0 (see LICENSE)
+
+This directory contains the JoyAI-Image-Edit inference stack used as the frozen teacher:
+the MMDiT transformer, the Wan VAE wrapper, text-encoder glue, scheduler, pipeline and the
+inference runtime (infer_runtime/). No weights are included.
+
+Third-party code inside (see NOTICE):
+- modules/models/attention.py, modules/utils/fsdp_load.py: adapted from FastVideo
+  (https://github.com/hao-ai-lab/FastVideo), Apache-2.0.
+- modules/models/pipeline.py, modules/models/scheduler.py: derived from Hugging Face diffusers,
+  Apache-2.0.
+- modules/models/mmdit/vae/wanvae.py: Wan2.1 VAE, Apache-2.0.
+
+Local modifications:
+- imports rewritten to live under i2vt.vendor.joyedit; modules/utils/utils.py adds that prefix to
+  the `modules.` class paths it builds from configs, and infer_runtime/infer_config.py rewrites the
+  imports of a checkpoint's Python config the same way;
+- modules/models/attention.py: implements the torch SDPA fallback the module advertises,
+  so the teacher runs without flash-attn;
+- modules/models/pipeline.py: uses `_execution_device` instead of `transformer.device`, so the
+  call is built on the right device under model CPU offload.

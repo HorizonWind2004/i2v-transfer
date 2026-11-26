@@ -1,0 +1,41 @@
+# Small VideoCoF config for the tests; the values differ from the defaults on purpose.
+run:
+  name: videocof-test
+  mode: train_eval
+  output_dir: ${I2V_OUTPUT_ROOT}/outputs
+  cache_dir: ${I2V_CACHE_ROOT}/videocof-test
+  inference_dir: ${I2V_OUTPUT_ROOT}/inference
+runtime:
+  student_gpus: [2, 3, 4, 5, 6, 7]
+  eval_gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+data:
+  train_dataset: ${I2V_ASSET_ROOT}/datasets/I2VT-17K/data/train.parquet
+  num_workers: 2
+  prefetch_factor: 2
+student:
+  backend: videocof
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
+  lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/videocof.safetensors
+  gradient_checkpointing: true
+teacher:
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/JoyAI-Image-Edit
+  guidance_scale: 2.0
+train:
+  learning_rate: 5.0e-05
+  max_steps: 200
+  loss_type: x
+  gradient_accumulation_steps: 8
+  rollout:
+    chunk_size: 5
+  validation:
+    samples: 6
+  logging:
+    mode: online
+eval:
+  bench_dir: ${I2V_CACHE_ROOT}/OpenVE-Bench
+  bench_csv: ${I2V_CACHE_ROOT}/OpenVE-Bench/benchmark_videos.csv
+  inference:
+    num_frames: 81
+    source_frames: 81
+    kwargs:
+      acceleration_lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/Wan2.1_Text_to_Video_14B_FusionX_LoRA.safetensors

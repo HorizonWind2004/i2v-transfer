@@ -1,0 +1,21 @@
+run:
+  name: i2vt-cof
+runtime:
+  student_gpus: [0, 1]
+student:
+  backend: videocof
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
+  lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/videocof.safetensors
+teacher:
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/JoyAI-Image-Edit
+  guidance_scale: 2.0
+train:
+  learning_rate: 5.0e-05
+  max_steps: 200
+  gradient_accumulation_steps: 24
+  rollout:
+    chunk_size: 2
+eval:
+  inference:
+    kwargs:
+      acceleration_lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/Wan2.1_Text_to_Video_14B_FusionX_LoRA.safetensors

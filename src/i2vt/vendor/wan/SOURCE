@@ -1,0 +1,22 @@
+Upstream-Repository: https://github.com/knightyxp/VideoCoF (its videox_fun/ package)
+Upstream-Commit: 486ae9549aac771074c0c7815eb8786648c98dfa
+Upstream-Origins:
+  https://github.com/Wan-Video/Wan2.1              (transformer, VAE, T5 text encoder)
+  https://github.com/aigc-apps/VideoX-Fun          (pipeline, LoRA and distributed utilities)
+License: Apache-2.0 (see LICENSE); utils/lora_utils.py references microsoft/LoRA (MIT), see NOTICE.
+
+This directory contains the Wan2.1 model code used by the VideoCoF student backend. No weights
+are included (Wan2.1-T2V-14B, the VideoCoF LoRA and the FusionX acceleration LoRA are downloaded
+separately).
+
+Third-party code inside (see NOTICE): diffusers schedulers (utils/fm_solvers*.py), TeaCache
+(models/cache_utils.py), RIFLEx (models/wan_transformer3d.py), LoRA reference implementations
+(utils/lora_utils.py).
+
+Local modifications:
+- imports rewritten to live under i2vt.vendor.wan; __init__.py files export only the vendored
+  modules; the Wan2.1 config ships as package data; modules the backends do not use are left out;
+- utils/fm_solvers_unipc.py keeps Wan's sigma schedule and flow conversion but reuses the
+  diffusers solver updates;
+- models/attention_utils.py: flash attention runs its deterministic backward when
+  torch.use_deterministic_algorithms is on.

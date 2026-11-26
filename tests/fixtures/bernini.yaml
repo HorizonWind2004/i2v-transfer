@@ -1,0 +1,42 @@
+# Small Bernini config for the tests; the values differ from the defaults on purpose.
+run:
+  name: bernini-test
+  output_dir: ${I2V_OUTPUT_ROOT}/outputs
+  cache_dir: ${I2V_CACHE_ROOT}/bernini-test
+  inference_dir: ${I2V_OUTPUT_ROOT}/inference
+runtime:
+  student_gpus: [2, 3, 4, 5, 6, 7]
+  eval_gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+data:
+  train_dataset: ${I2V_ASSET_ROOT}/datasets/I2VT-17K/data/train.parquet
+  num_workers: 1
+  prefetch_factor: 1
+  pin_memory: false
+  persistent_workers: false
+student:
+  backend: bernini
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/Bernini-R-1.3B-Diffusers
+  gradient_checkpointing: true
+  model_kwargs:
+    component_root: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
+teacher:
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/JoyAI-Image-Edit
+  guidance_scale: 2.0
+train:
+  learning_rate: 2.0e-05
+  max_steps: 100
+  loss_type: v_cos
+  gradient_accumulation_steps: 1
+  save_steps: 25
+  rollout:
+    chunk_size: 5
+  validation:
+    samples: 1
+    samples_per_rank: 0
+  logging:
+    mode: online
+eval:
+  bench_dir: ${I2V_CACHE_ROOT}/OpenVE-Bench
+  bench_csv: ${I2V_CACHE_ROOT}/OpenVE-Bench/benchmark_videos.csv
+  scoring:
+    enabled: false

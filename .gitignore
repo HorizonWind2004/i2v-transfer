@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+wandb/
+outputs/
+cache/
+checkpoints/
+*.safetensors
+*.ckpt
+*.pt
+*.log
+.DS_Store
+
+# Python package/build tooling
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+/dist/
+.ipynb_checkpoints/

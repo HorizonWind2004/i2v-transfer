@@ -1,0 +1,18 @@
+Upstream-Repository: https://github.com/bytedance/Bernini
+Upstream-Commit: 2d2b4591ac053ec25c6371b01a5a6746679e5793
+Upstream-Branch: main
+License: Apache-2.0 (see LICENSE)
+
+This directory contains the minimal Bernini-R renderer model stack copied from
+the commit above. No model weights, checkpoints, media assets, training code,
+or end-to-end Bernini planner code are included.
+
+Local modifications:
+- __init__.py exports only the vendored renderer model stack.
+- models/__init__.py omits the non-vendored full Bernini planner.
+- models/transformer_wan.py removes the optional Ulysses/VeOmni
+  sequence-parallel path. Each process executes a complete renderer copy, so
+  single-GPU and independent-rank data-parallel inference share one code path.
+
+The v2v inference path, with one expert and with two, matches upstream
+bytedance/Bernini at e6c2cf11843470b08491745947abcba9c3c6b079.
