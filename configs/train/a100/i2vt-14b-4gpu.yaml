@@ -1,0 +1,31 @@
+# A100 variant: student and teacher on separate GPUs (teacher over RPC), AdamW state on the CPU.
+run:
+  name: i2vt-14b-a100-4gpu
+runtime:
+  student_gpus: [0, 1]
+  teacher_gpus: [2, 3]   # RPC: the teacher runs on its own cards
+data:
+  num_workers: 1
+  prefetch_factor: 1
+  pin_memory: false
+  persistent_workers: false
+student:
+  backend: bernini
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/Bernini-R-Diffusers
+  gradient_checkpointing: true
+  model_kwargs:
+    component_root: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
+teacher:
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/JoyAI-Image-Edit
+  guidance_scale_by_type: {action_edit: 2.0, motion_edit: 2.0}
+  guidance_scale_by_task: {smile: 1.0, frown: 1.0, cry: 1.0, angry: 1.0, sad: 1.0, surprised: 1.0}
+train:
+  offload_optimizer: true   # AdamW state in CPU memory: both experts plus Adam do not fit on 80 GB
+  learning_rate: 5.0e-05
+  max_steps: 200
+  gradient_accumulation_steps: 24
+  rollout:
+    chunk_size: 2
+  validation:
+    samples: 1
+    samples_per_rank: 0

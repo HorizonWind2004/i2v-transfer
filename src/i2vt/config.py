@@ -219,6 +219,12 @@ class TrainingConfig(ConfigMixin):
     log_steps: int = 1
     seed: int = 2026
     check_vae_compat: bool = True
+    offload_optimizer: bool = False
+    """Keep the AdamW state and the fp32 master copy of the trainable weights in CPU memory.
+
+    The update is the same fp32 AdamW; only where it runs changes. It saves 8 bytes of GPU memory per trainable
+    parameter (the two Adam moments), about 10 GB for I2VT-14B, and costs a few seconds per optimizer step.
+    """
     rollout: RolloutConfig = field(default_factory=RolloutConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)

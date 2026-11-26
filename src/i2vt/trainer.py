@@ -248,7 +248,8 @@ def _train(config, rank, world, device, student_group, student, teacher):
 
     params = student.params()
     broadcast_params(params, src=student_offset, group=student_group)
-    optimizer = torch.optim.AdamW(params, lr=config.train.learning_rate, weight_decay=config.train.weight_decay)
+    optimizer_cls = OffloadedAdamW if config.train.offload_optimizer else torch.optim.AdamW
+    optimizer = optimizer_cls(params, lr=config.train.learning_rate, weight_decay=config.train.weight_decay)
     dataset = build_image_edit_dataset(config.data.base_path, config.data.train_dataset)
     sampler = DistributedSampler(dataset, num_replicas=student_world, rank=rank - student_offset, shuffle=True)
     loader_kwargs = dict(
@@ -479,6 +480,34 @@ def _train(config, rank, world, device, student_group, student, teacher):
     if coordinator:
         student.save(out_dir / "checkpoints", step)
         finish_wandb_run(wandb_run)
+
+
+class OffloadedAdamW:
+    """AdamW whose moments and fp32 master weights live in CPU memory.
+
+    The GPU keeps the trainable weights and their gradients. At each step the gradients go to the
+    CPU, the same fp32 AdamW update runs there, and the new weights are copied back, so the result
+    equals torch.optim.AdamW on the GPU and the GPU never holds the two moments.
+    """
+
+    def __init__(self, params, lr, weight_decay):
+        self.params = list(params)
+        self.master = [torch.nn.Parameter(p.detach().to("cpu", dtype=torch.float32, copy=True)) for p in self.params]
+        self.optimizer = torch.optim.AdamW(self.master, lr=lr, weight_decay=weight_decay)
+        self.param_groups = self.optimizer.param_groups
+
+    def zero_grad(self, set_to_none=True):
+        for p in self.params:
+            p.grad = None
+
+    @torch.no_grad()
+    def step(self):
+        for p, m in zip(self.params, self.master):
+            m.grad = None if p.grad is None else p.grad.detach().to("cpu", dtype=torch.float32)
+        self.optimizer.step()
+        for p, m in zip(self.params, self.master):
+            p.copy_(m.to(device=p.device, dtype=p.dtype))
+            m.grad = None
 
 
 class Trainer:

@@ -175,11 +175,13 @@ waits until they accept connections and then starts training; nothing else has t
 |---|---|---|---|---|
 | B300, 2 | `i2vt-14b.yaml`, `i2vt-cof.yaml` | 2 + 2, on the same cards | 24 | |
 | B300, 3 | `i2vt-1.3b.yaml` | 3 + 3, on the same cards | 16 | |
-| A100 80 GB, 2 | `a100/i2vt-cof-2gpu.yaml` | 1 + 1 | 48 | smoke-tested: 2 optimizer steps, checkpoint saved |
+| A100 80 GB, 2 | `a100/i2vt-14b-2gpu.yaml`, `a100/i2vt-cof-2gpu.yaml` | 1 + 1 | 48 | smoke-tested: 2 optimizer steps, checkpoint saved |
+| A100 80 GB, 4 | `a100/i2vt-14b-4gpu.yaml` | 2 + 2 | 24 | not tested yet |
 | A100 80 GB, 4 | `a100/i2vt-cof-4gpu.yaml` | 2 + 2 | 24 | not tested yet |
 | A100 80 GB, 4 | `a100/i2vt-1.3b-4gpu.yaml` | 3 + 1 | 16 | not tested yet |
 
 ```bash
+i2vt configs/train/a100/i2vt-14b-2gpu.yaml    # I2VT-14B on two A100s
 i2vt configs/train/a100/i2vt-cof-2gpu.yaml    # I2VT-CoF on two A100s
 ```
 
@@ -189,13 +191,15 @@ change the ports if they are taken. Their logs are in `outputs/<name>/teacher_lo
 
 Notes from the A100 runs:
 
-- **I2VT-14B does not fit on an A100 80 GB.** Its student holds both Bernini-R experts plus the
-  LoRA and optimizer state on one card and runs out of memory when the optimizer is created, even
-  with gradient checkpointing. Train it on B300-class cards.
+- **I2VT-14B on an A100 80 GB needs `train.offload_optimizer: true`**, which the A100 configs set. The
+  student holds both Bernini-R experts, and without it the AdamW state tips the card over 80 GB
+  when the optimizer is created. With it, the fp32 AdamW runs on the CPU (the same update, a few
+  seconds per optimizer step, about 20 GB of host memory) and the GPU keeps only the weights and
+  gradients.
 - The A100 I2VT-CoF configs turn on `student.gradient_checkpointing`; a 14B student without it
   runs out of memory in the first rollout.
-- Speed on two A100s (one student, one teacher): about 0.04 samples/s, so one step of 48 samples
-  takes around 20 minutes and the 200 steps around 67 hours. Four cards (two students) halve that.
+- Speed on two A100s (one student, one teacher): about 0.04 samples/s for both I2VT-14B and I2VT-CoF,
+  so one step of 48 samples takes around 20 minutes and the 200 steps around 65 hours. Four cards (two students) halve that.
 - I2VT-CoF needs the full `Wan2.1-T2V-14B` download, transformer shards included (about 65 GB). The
   T5/VAE-only subset suggested above is enough for the Bernini models but not for CoF. The
   `Bernini-R-Diffusers` download for I2VT-14B is about 107 GB.

@@ -274,7 +274,12 @@ def train_worker(config):
             Trainer(config, teacher=teacher).train(rank, world, device, group)
         finally:
             teacher.close()
-        dist.barrier()
+        # A card that trained a 14B student has almost no free memory left, and NCCL allocates when it
+        # creates its communicator on the first collective. Hand the cached blocks back first, and with
+        # one student rank there is nothing to wait for.
+        torch.cuda.empty_cache()
+        if world > 1:
+            dist.barrier()
     finally:
         dist.destroy_process_group()
 
