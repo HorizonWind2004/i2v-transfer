@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -33,9 +34,12 @@ class ProcessGroup:
         self.processes.append(process)
         return process
 
-    def wait(self, processes):
+    def wait(self, processes, *, monitors=()):
         pending = set(processes)
         while pending:
+            for process in monitors:
+                if process.poll() is not None:
+                    raise RuntimeError(f"Required service exited with status {process.returncode}")
             for process in list(pending):
                 status = process.poll()
                 if status is not None:
@@ -70,27 +74,61 @@ class ProcessGroup:
         self.close()
 
 
+def wait_for_teachers(config, processes, *, timeout=1800):
+    deadline = time.monotonic() + timeout
+    pending = set(config.teacher.ports)
+    while pending:
+        if any(p.poll() is not None for p in processes):
+            raise RuntimeError("A teacher server exited before it was ready; see teacher_logs/")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Teacher servers not ready on ports {sorted(pending)}")
+        for port in list(pending):
+            try:
+                with socket.create_connection((config.teacher.host, port), timeout=1):
+                    pending.remove(port)
+            except OSError:
+                pass
+        if pending:
+            time.sleep(0.5)
+
+
+def _train_command(config, resolved):
+    return [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nnodes=1",
+        f"--nproc_per_node={len(config.runtime.student_gpus)}",
+        "-m",
+        "i2vt.run",
+        str(resolved),
+        "--worker",
+        "train",
+    ]
+
+
 def run_training(config, resolved):
-    # Each rank builds its own teacher on its own GPU.
     with ProcessGroup() as group:
-        student = group.start(
-            [
-                sys.executable,
-                "-m",
-                "torch.distributed.run",
-                "--standalone",
-                "--nnodes=1",
-                f"--nproc_per_node={len(config.runtime.student_gpus)}",
-                "-m",
-                "i2vt.run",
-                str(resolved),
-                "--worker",
-                "train",
-            ],
-            config.output_path / "run.log",
-            gpu_ids=config.runtime.student_gpus,
-        )
-        group.wait([student])
+        if config.runtime.teacher_gpus is None:
+            # Each rank builds its own teacher on its own GPU.
+            student = group.start(_train_command(config, resolved), config.output_path / "run.log",
+                                  gpu_ids=config.runtime.student_gpus)
+            group.wait([student])
+            return
+        # RPC: one teacher server per teacher GPU, students call them over TCP.
+        teachers = [
+            group.start(
+                [sys.executable, "-m", "i2vt.run", str(resolved), "--worker", "teacher", "--index", str(index)],
+                config.output_path / "teacher_logs" / f"teacher_{index}.log",
+                gpu_ids=[gpu],
+            )
+            for index, gpu in enumerate(config.runtime.teacher_gpus)
+        ]
+        wait_for_teachers(config, teachers)
+        student = group.start(_train_command(config, resolved), config.output_path / "run.log",
+                              gpu_ids=config.runtime.student_gpus)
+        group.wait([student], monitors=teachers)
 
 
 def run_evaluation(config, resolved):
@@ -134,7 +172,11 @@ def run(config, *, dry_run=False):
         print(config.to_yaml(), end="")
         print(f"# checkpoint: {config.checkpoint_path or 'none (base weights)'}")
         print(f"# inference outputs: {config.inference_path}")
-        print(f"# training processes: {len(config.runtime.student_gpus)}, each with a student and a teacher")
+        if config.runtime.teacher_gpus is None:
+            print(f"# training processes: {len(config.runtime.student_gpus)}, each with a student and a teacher")
+        else:
+            print(f"# training processes: {len(config.runtime.student_gpus)} students, "
+                  f"{len(config.runtime.teacher_gpus)} teacher servers (RPC)")
         print(f"# evaluation processes: {len(config.runtime.eval_gpus)}")
         return
     preflight(config)
@@ -213,15 +255,41 @@ def train_worker(config):
         # new_group does not inherit the timeout from init_process_group, and every training
         # collective runs on this group, so pass the timeout again.
         group = dist.new_group(ranks=list(range(world)), timeout=timedelta(seconds=timeout_sec))
-        teacher = create_teacher(config, device)
+        if config.runtime.teacher_gpus is None:
+            teacher = create_teacher(config, device)
+        else:
+            from i2vt.models.teacher_rpc import RPCTeacherBackend
+
+            teacher = RPCTeacherBackend(
+                [f"{config.teacher.host}:{port}" for port in config.teacher.ports],
+                rank,
+                timeout=config.teacher.rpc_timeout,
+                max_workers=config.teacher.client_workers,
+            )
         # JoyEdit's build_model() seeds every rank with train.seed. Reseed so ranks draw different
         # rollout noise, and so the student starts from the same RNG state as with the offline
         # teacher, which never touches the generators.
         seed_everything(config.train.seed + rank, config.train.deterministic)
-        Trainer(config, teacher=teacher).train(rank, world, device, group)
+        try:
+            Trainer(config, teacher=teacher).train(rank, world, device, group)
+        finally:
+            teacher.close()
         dist.barrier()
     finally:
         dist.destroy_process_group()
+
+
+def teacher_worker(config, index):
+    import torch
+
+    from i2vt.models import create_teacher
+    from i2vt.models.teacher_rpc import TeacherServer
+
+    device = torch.device("cuda:0")
+    torch.cuda.set_device(device)
+    teacher = create_teacher(config, device)
+    with TeacherServer((config.teacher.host, config.teacher.ports[index]), teacher) as server:
+        server.serve_forever()
 
 
 def apply_inference_steps(config, steps: int | None) -> None:
@@ -255,21 +323,23 @@ def main(argv=None):
     parser.add_argument("--checkpoint", type=Path, help="LoRA to evaluate (default: the run's final checkpoint)")
     parser.add_argument("--steps", type=int, help="inference steps for evaluation (default: the backend's)")
     parser.add_argument("--judge", help="Gemini model that scores the edits (default: the benchmark's judge)")
-    parser.add_argument("--worker", choices=["train", "infer", "score"], help=argparse.SUPPRESS)
+    parser.add_argument("--worker", choices=["train", "teacher", "infer", "score"], help=argparse.SUPPRESS)
     parser.add_argument("--index", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     launcher_options = (args.mode, args.dry_run, args.dataset, args.bench, args.checkpoint, args.steps, args.judge)
     if args.worker and any(option for option in launcher_options):
         parser.error("Workers read the resolved configuration; launcher options do not apply")
-    if args.index is not None and args.worker != "infer":
-        parser.error("--index applies only to inference workers")
+    if args.index is not None and args.worker not in {"teacher", "infer"}:
+        parser.error("--index applies only to teacher and inference workers")
     config = ExperimentConfig.from_yaml(args.config)
-    if args.worker == "infer":
-        count = len(config.runtime.eval_gpus)
+    if args.worker in {"teacher", "infer"}:
+        count = len(config.runtime.teacher_gpus or []) if args.worker == "teacher" else len(config.runtime.eval_gpus)
         if args.index is None or not 0 <= args.index < count:
-            parser.error(f"infer worker requires --index between 0 and {count - 1}")
+            parser.error(f"{args.worker} worker requires --index between 0 and {count - 1}")
     if args.worker == "train":
         train_worker(config)
+    elif args.worker == "teacher":
+        teacher_worker(config, args.index)
     elif args.worker == "infer":
         from i2vt.evaluation.infer import infer
 

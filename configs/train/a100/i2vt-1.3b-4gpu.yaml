@@ -1,0 +1,21 @@
+# A100 variant: student and teacher on separate GPUs (teacher over RPC). Same recipe as i2vt-1.3b.yaml.
+run:
+  name: i2vt-1.3b-a100-4gpu
+runtime:
+  student_gpus: [0, 1, 2]
+  teacher_gpus: [3]   # RPC: the teacher runs on its own cards
+  eval_gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+student:
+  backend: bernini
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/Bernini-R-1.3B-Diffusers
+  model_kwargs:
+    component_root: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
+teacher:
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/JoyAI-Image-Edit
+  guidance_scale_by_type: {action_edit: 2.0, motion_edit: 2.0}
+  guidance_scale_by_task: {smile: 1.0, frown: 1.0, cry: 1.0, angry: 1.0, sad: 1.0, surprised: 1.0}
+train:
+  learning_rate: 2.0e-05
+  max_steps: 200
+  gradient_accumulation_steps: 16
+  save_steps: 100

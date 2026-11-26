@@ -162,6 +162,45 @@ The training set is downloaded from the Hub on first use. The effective batch is
 `len(student_gpus) × gradient_accumulation_steps`; keep the product when you change the number of
 GPUs. [configs/README.md](configs/README.md) describes the three configs.
 
+#### Hardware
+
+The configs in `configs/train/` put a student rank and its own copy of the JoyAI-Image-Edit
+teacher on every training GPU, and were run on **B300** (288 GB) cards. A card with less memory
+cannot hold both. For **A100 (80 GB)** the configs in [`configs/train/a100/`](configs/train/a100)
+run the teacher on separate GPUs as a small TCP server (`runtime.teacher_gpus`); the student ranks
+call it for the teacher velocity at every rollout step. `i2vt <config>` starts the teacher servers,
+waits until they accept connections and then starts training; nothing else has to be launched.
+
+| Cards | Config | Students + teachers | Accumulation | Status |
+|---|---|---|---|---|
+| B300, 2 | `i2vt-14b.yaml`, `i2vt-cof.yaml` | 2 + 2, on the same cards | 24 | |
+| B300, 3 | `i2vt-1.3b.yaml` | 3 + 3, on the same cards | 16 | |
+| A100 80 GB, 2 | `a100/i2vt-cof-2gpu.yaml` | 1 + 1 | 48 | smoke-tested: 2 optimizer steps, checkpoint saved |
+| A100 80 GB, 4 | `a100/i2vt-cof-4gpu.yaml` | 2 + 2 | 24 | not tested yet |
+| A100 80 GB, 4 | `a100/i2vt-1.3b-4gpu.yaml` | 3 + 1 | 16 | not tested yet |
+
+```bash
+i2vt configs/train/a100/i2vt-cof-2gpu.yaml    # I2VT-CoF on two A100s
+```
+
+The effective batch stays 48 in every row: `len(student_gpus) × gradient_accumulation_steps`.
+The teacher servers listen on `127.0.0.1`, ports 29600 and up (`teacher.host`, `teacher.ports`);
+change the ports if they are taken. Their logs are in `outputs/<name>/teacher_logs/`.
+
+Notes from the A100 runs:
+
+- **I2VT-14B does not fit on an A100 80 GB.** Its student holds both Bernini-R experts plus the
+  LoRA and optimizer state on one card and runs out of memory when the optimizer is created, even
+  with gradient checkpointing. Train it on B300-class cards.
+- The A100 I2VT-CoF configs turn on `student.gradient_checkpointing`; a 14B student without it
+  runs out of memory in the first rollout.
+- Speed on two A100s (one student, one teacher): about 0.04 samples/s, so one step of 48 samples
+  takes around 20 minutes and the 200 steps around 67 hours. Four cards (two students) halve that.
+- I2VT-CoF needs the full `Wan2.1-T2V-14B` download, transformer shards included (about 65 GB). The
+  T5/VAE-only subset suggested above is enough for the Bernini models but not for CoF. The
+  `Bernini-R-Diffusers` download for I2VT-14B is about 107 GB.
+- Tested with Python 3.10. On Python 3.14 the data loader fails to start its workers.
+
 ## Benchmark
 
 [OpenVE++](https://huggingface.co/datasets/sanaka87/OpenVEPP-Bench) adds 207 clips in four task

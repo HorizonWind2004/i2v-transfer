@@ -261,7 +261,13 @@ class RunConfig(ConfigMixin):
 @dataclass(kw_only=True)
 class RuntimeConfig(ConfigMixin):
     student_gpus: list[int]
-    """GPUs for training. Each one holds a student rank and its teacher."""
+    """GPUs for training. Without teacher_gpus each one holds a student rank and its teacher."""
+    teacher_gpus: list[int] | None = None
+    """GPUs that serve the teacher over RPC, one server each, disjoint from student_gpus.
+
+    Set this when a card cannot hold the student and the teacher together (A100 40/80 GB for the
+    14B and CoF models). Left unset, every student GPU also holds its own teacher (B300).
+    """
     eval_gpus: list[int] | None = None
     """GPUs for evaluation, one inference worker each; defaults to student_gpus."""
 
@@ -313,6 +319,14 @@ class TeacherConfig(ConfigMixin):
     model_kwargs: dict[str, Any] = field(default_factory=lambda: {"config_path": None})
     guidance_scale_by_type: dict[str, float] | None = None
     """Teacher CFG per edit type. Types not listed use guidance_scale."""
+    host: str = "127.0.0.1"
+    """RPC only: where the teacher servers listen and the student ranks connect."""
+    ports: list[int] | None = None
+    """RPC only: one TCP port per teacher GPU (default 29600, 29601, ...)."""
+    client_workers: int = 0
+    """RPC only: requests in flight per student rank (0 = one per teacher)."""
+    rpc_timeout: float | None = None
+    """RPC only: seconds before a teacher call fails (None = wait)."""
     guidance_scale_by_task: dict[str, float] | None = None
     """Teacher CFG per sub-task (metadata.task, e.g. smile). Overrides guidance_scale_by_type.
 
@@ -450,6 +464,22 @@ class ExperimentConfig(ConfigMixin):
         for devices in (self.runtime.student_gpus, self.runtime.eval_gpus):
             if not devices or len(devices) != len(set(devices)) or min(devices) < 0:
                 raise ValueError("GPU lists must be nonempty, unique, and nonnegative")
+        if self.runtime.teacher_gpus is not None:
+            teachers = self.runtime.teacher_gpus
+            if not teachers or len(teachers) != len(set(teachers)) or min(teachers) < 0:
+                raise ValueError("runtime.teacher_gpus must be nonempty, unique, and nonnegative")
+            if set(teachers) & set(self.runtime.student_gpus):
+                raise ValueError("runtime.teacher_gpus and runtime.student_gpus overlap")
+            if self.teacher.backend != "joyedit":
+                raise ValueError("runtime.teacher_gpus (RPC) supports the joyedit teacher only")
+            if self.teacher.ports is None:
+                self.teacher.ports = [29600 + i for i in range(len(teachers))]
+            if len(self.teacher.ports) != len(teachers):
+                raise ValueError("teacher.ports: one port per teacher GPU is required")
+            if len(set(self.teacher.ports)) != len(self.teacher.ports) or any(
+                not 0 < p < 65536 for p in self.teacher.ports
+            ):
+                raise ValueError("teacher.ports: invalid or repeated port")
         if self.run.name in {"", ".", ".."} or Path(self.run.name).name != self.run.name:
             raise ValueError("run.name must be a single path component")
         if self.student.weight_dtype not in {"float32", "float16", "bfloat16"}:

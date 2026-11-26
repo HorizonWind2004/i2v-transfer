@@ -1,0 +1,24 @@
+# A100 variant: student and teacher on separate GPUs (teacher over RPC). Same recipe as i2vt-cof.yaml.
+run:
+  name: i2vt-cof-a100-2gpu
+runtime:
+  student_gpus: [0]
+  teacher_gpus: [1]   # RPC: the teacher runs on its own cards
+student:
+  backend: videocof
+  gradient_checkpointing: true   # an A100 (80 GB) cannot keep the 14B activations; B300 can
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
+  lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/videocof.safetensors
+teacher:
+  model_path: ${I2V_ASSET_ROOT}/checkpoints/JoyAI-Image-Edit
+  guidance_scale: 2.0
+train:
+  learning_rate: 5.0e-05
+  max_steps: 200
+  gradient_accumulation_steps: 48
+  rollout:
+    chunk_size: 2
+eval:
+  inference:
+    kwargs:
+      acceleration_lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/Wan2.1_Text_to_Video_14B_FusionX_LoRA.safetensors
