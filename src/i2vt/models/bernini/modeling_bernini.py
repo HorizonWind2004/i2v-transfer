@@ -13,7 +13,7 @@ from i2vt.models.bernini.inference_config import (
     OFFICIAL_WAN_NEGATIVE_PROMPT,
     v2v_model_prompt,
 )
-from i2vt.models.modeling_utils import DistillationStep, StudentBackend
+from i2vt.models.modeling_utils import DistillationStep, StudentBackend, maybe_compile_blocks
 from i2vt.pipelines.bernini.pipeline_bernini import BerniniVideoEditPipeline, expert_boundary
 from i2vt.pipelines.pipeline_utils import training_size
 from i2vt.utils import (
@@ -170,6 +170,8 @@ class BerniniStudentBackend(StudentBackend):
                 print(f"Loaded Bernini low-noise LoRA from {config.lora_path_2}: {info}", flush=True)
             self.network_2.to(device=device, dtype=torch.float32)  # fp32 master weights, see network above
             self.network_2.train()
+        maybe_compile_blocks(self.transformer)
+        maybe_compile_blocks(self.transformer_2)
 
         stats_path = Path(config.model_path) / "vae" / "config.json"
         if not stats_path.is_file():

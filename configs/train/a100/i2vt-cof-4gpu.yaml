@@ -7,6 +7,8 @@ runtime:
 student:
   backend: videocof
   gradient_checkpointing: true   # an A100 (80 GB) cannot keep the 14B activations; B300 can
+  checkpoint_skip_blocks: 4   # 4 of 40 blocks skip recomputation; peak ~70 GB of 80
+  compile_blocks: true
   model_path: ${I2V_ASSET_ROOT}/checkpoints/Wan2.1-T2V-14B
   lora_path: ${I2V_ASSET_ROOT}/checkpoints/VideoCoF/videocof.safetensors
 teacher:
@@ -17,7 +19,7 @@ train:
   max_steps: 200
   gradient_accumulation_steps: 24
   rollout:
-    chunk_size: 2
+    chunk_size: 4
 eval:
   inference:
     kwargs:

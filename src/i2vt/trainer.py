@@ -299,7 +299,17 @@ def _train(config, rank, world, device, student_group, student, teacher):
     epoch = 0
     sampler.set_epoch(epoch)
     loader_iter = iter(loader)
+    # Benchmarking aid, off unless set: profile one optimizer step and write its trace and kernel table.
+    profile_step = int(os.environ.get("I2VT_PROFILE_STEP", "0"))
+    profile_dir = os.environ.get("I2VT_PROFILE_DIR")
     while step < config.train.max_steps:
+        profiler = None
+        if profile_step and profile_dir and step + 1 == profile_step and rank == student_offset:
+            profiler = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+            )
+            profiler.__enter__()
         step_start = time.perf_counter()
         timers = {name: 0.0 for name in TIMER_NAMES}
         optimizer.zero_grad(set_to_none=True)
@@ -397,6 +407,15 @@ def _train(config, rank, world, device, student_group, student, teacher):
         t0 = time.perf_counter()
         optimizer.step()
         timers["optimizer"] += time.perf_counter() - t0
+        if profiler is not None:
+            torch.cuda.synchronize()
+            profiler.__exit__(None, None, None)
+            Path(profile_dir).mkdir(parents=True, exist_ok=True)
+            profiler.export_chrome_trace(str(Path(profile_dir) / "trace.json"))
+            table = profiler.key_averages().table(sort_by="cuda_time_total", row_limit=60)
+            (Path(profile_dir) / "kernels.txt").write_text(table)
+            shapes = profiler.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=40)
+            (Path(profile_dir) / "kernels_by_shape.txt").write_text(shapes)
         timers["step"] = time.perf_counter() - step_start
         step += 1
         should_log = step % config.train.log_steps == 0
@@ -449,7 +468,8 @@ def _train(config, rank, world, device, student_group, student, teacher):
                     f"timesteps={[round(x, 3) for x in torch.stack(selected_timesteps).tolist()]} "
                     f"timestep_losses={[round(float(v.item()), 6) for v in timestep_losses]} "
                     f"task_losses=[{' '.join(f'{k.rsplit(chr(47), 1)[-1]}={v:.5f}' for k, v in task_items.items())}] "
-                    f"timing=[{timing_summary}]",
+                    f"timing=[{timing_summary}] "
+                    f"peak_gib={torch.cuda.max_memory_allocated(device) / 2**30:.1f}",
                     flush=True,
                 )
                 if wandb_run is not None:

@@ -244,6 +244,11 @@ def train_worker(config):
     from i2vt.models import create_teacher
     from i2vt.trainer import Trainer
 
+    # The speed switches are read where they act (transformer forward, student setup); an environment
+    # variable of the same name, if set, overrides the config for A/B timing.
+    os.environ.setdefault("I2VT_CKPT_SKIP_BLOCKS", str(config.student.checkpoint_skip_blocks))
+    os.environ.setdefault("I2VT_COMPILE_BLOCKS", "1" if config.student.compile_blocks else "0")
+    os.environ.setdefault("I2VT_COMPILE_EMULATE", "1")
     timeout_sec = int(os.environ.get("I2VT_DIST_TIMEOUT", "7200"))
     dist.init_process_group("nccl", timeout=timedelta(seconds=timeout_sec))
     rank, world = dist.get_rank(), dist.get_world_size()

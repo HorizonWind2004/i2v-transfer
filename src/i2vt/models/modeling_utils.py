@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hashlib
 import json
 from abc import ABC, abstractmethod
@@ -130,3 +131,30 @@ class TeacherBackend(Backend):
 
     def close(self):
         pass
+
+
+def maybe_compile_blocks(transformer) -> None:
+    """I2VT_COMPILE_BLOCKS=1: torch.compile every transformer block in place (parameter names unchanged).
+
+    The blocks share one forward, so every token count they see is one more entry in the same dynamo
+    cache; the default limit of 8 would silently fall back to eager after a few sample sizes.
+    """
+    if os.environ.get("I2VT_COMPILE_BLOCKS", "0") == "0" or transformer is None:
+        return
+    import torch._dynamo
+
+    torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 256)
+    if hasattr(torch._dynamo.config, "recompile_limit"):
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 256)
+    if hasattr(torch._dynamo.config, "accumulated_cache_size_limit"):
+        torch._dynamo.config.accumulated_cache_size_limit = max(torch._dynamo.config.accumulated_cache_size_limit, 2048)
+    if os.environ.get("I2VT_COMPILE_EMULATE", "0") != "0":
+        # Round every bf16 intermediate the way eager does instead of keeping it in fp32 inside a fused kernel.
+        import torch._inductor.config as inductor_config
+
+        inductor_config.emulate_precision_casts = True
+    mode = os.environ.get("I2VT_COMPILE_MODE") or None
+    dynamic = {"1": True, "0": False}.get(os.environ.get("I2VT_COMPILE_DYNAMIC", ""), None)
+    for block in transformer.blocks:
+        block.compile(mode=mode, dynamic=dynamic)
+    print(f"compiled {len(transformer.blocks)} transformer blocks (mode={mode}, dynamic={dynamic})", flush=True)

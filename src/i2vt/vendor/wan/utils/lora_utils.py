@@ -19,6 +19,9 @@ from safetensors.torch import load_file
 from transformers import T5EncoderModel
 
 
+_FAST_LORA = os.environ.get("I2VT_FAST_LORA", "1") != "0"
+
+
 class LoRAModule(torch.nn.Module):
     """
     replaces forward method of the original Linear, instead of replacing the original Linear module.
@@ -78,7 +81,28 @@ class LoRAModule(torch.nn.Module):
         self.org_module.forward = self.forward
         del self.org_module
 
+    def _fast_path(self, x):
+        """The same result with two fewer full-size passes over the activation, when that is exact.
+
+        Under a bf16 autocast with a bf16 input, casting x to fp32 for lora_down is undone by the
+        autocast at once (bf16 -> fp32 -> bf16 is lossless), so it is skipped. With multiplier 1 and a
+        power-of-two scale, (lx * 1) * scale rounds the same as one add with alpha = scale, which
+        replaces the two elementwise multiplies. Forward and backward stay bit for bit identical.
+        I2VT_FAST_LORA=0 restores the original path.
+        """
+        if not _FAST_LORA or self.training and (self.dropout or self.rank_dropout or self.module_dropout):
+            return False
+        if self.multiplier != 1.0 or self.scale <= 0 or math.frexp(self.scale)[0] != 0.5:
+            return False
+        return (
+            x.is_cuda
+            and torch.is_autocast_enabled("cuda")
+            and torch.get_autocast_dtype("cuda") == x.dtype == torch.bfloat16
+        )
+
     def forward(self, x, *args, **kwargs):
+        if self._fast_path(x):
+            return torch.add(self.org_forward(x), self.lora_up(self.lora_down(x)), alpha=self.scale)
         weight_dtype = x.dtype
         org_forwarded = self.org_forward(x)
 

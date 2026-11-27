@@ -22,6 +22,7 @@
 # patch-embedded by the caller.
 
 import math
+import os
 from functools import partial
 from typing import Optional, Tuple
 
@@ -500,7 +501,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
         )
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for block in self.blocks:
+            # The last skip blocks keep their activations instead of recomputing them in backward:
+            # the same gradients for more memory. I2VT_CKPT_SKIP_BLOCKS=0 checkpoints every block.
+            first_kept = len(self.blocks) - max(0, int(os.environ.get("I2VT_CKPT_SKIP_BLOCKS", "0")))
+            for block_idx, block in enumerate(self.blocks):
+                if block_idx >= first_kept:
+                    hidden_states = block(
+                        hidden_states, encoder_hidden_states, timestep_proj, rotary_emb,
+                        batch_image_vae_seqlen, text_features_length, **kwargs,
+                    )
+                    continue
                 hidden_states = self._gradient_checkpointing_func(
                     partial(block, **kwargs),
                     hidden_states,

@@ -11,6 +11,7 @@ from itertools import count
 from typing import Iterable
 
 from PIL import Image
+import torch
 
 from i2vt.models.modeling_utils import DistillationStep, TeacherBackend
 
@@ -94,13 +95,34 @@ class RPCTeacherBackend(TeacherBackend):
     def vae_signature(self):
         return call_teacher(self.endpoints[self.rank % len(self.endpoints)], {"type": "vae_signature"}, self.timeout)
 
+    @staticmethod
+    def _to_host(tensors):
+        """Start the device-to-host copies without blocking the training thread.
+
+        A plain .cpu() waits until the GPU has finished every kernel queued so far, so the training
+        thread could not queue the next rollout step while the teacher request was being built. The
+        copies go into pinned buffers on the current stream instead, and the sender thread waits on
+        an event recorded after them. The bytes sent are the same.
+        """
+        if not all(t.is_cuda for t in tensors):
+            return [t.cpu() for t in tensors], None
+        host = [torch.empty(t.shape, dtype=t.dtype, pin_memory=True) for t in tensors]
+        for h, t in zip(host, tensors):
+            h.copy_(t, non_blocking=True)
+        event = torch.cuda.Event()
+        event.record()
+        return host, event
+
     def submit(self, step, conditioning):
         source = conditioning.get("joyedit_source") or conditioning["source"]
+        (sigma, latent, timestep), ready = self._to_host(
+            [step.sigma.detach(), step.noisy_latents.detach(), step.timestep.float().reshape(1).detach()]
+        )
         payload = {
             "type": "velocity",
-            "sigma": step.sigma.detach().cpu(),
-            "latent": step.noisy_latents.detach().cpu(),
-            "timestep": step.timestep.float().reshape(1).detach().cpu(),
+            "sigma": sigma,
+            "latent": latent,
+            "timestep": timestep,
             "prompt": conditioning["joy_edit_prompt"],
             "source_png": self._source_png(source),
             "height": int(conditioning["height"]),
@@ -111,7 +133,13 @@ class RPCTeacherBackend(TeacherBackend):
             "task": conditioning.get("task"),
         }
         endpoint = self.endpoints[(self.rank + next(self._counter)) % len(self.endpoints)]
-        return self._executor.submit(call_teacher, endpoint, payload, self.timeout)
+
+        def send():
+            if ready is not None:
+                ready.synchronize()
+            return call_teacher(endpoint, payload, self.timeout)
+
+        return self._executor.submit(send)
 
     def predict(self, step, conditioning):
         return self.submit(step, conditioning).result().to(step.noisy_latents.device).detach()

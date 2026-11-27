@@ -304,6 +304,12 @@ class StudentConfig(ConfigMixin):
     lora_target: str = "all"
     weight_dtype: str = "bfloat16"
     gradient_checkpointing: bool = False
+    checkpoint_skip_blocks: int = 0
+    """With gradient_checkpointing, the last N transformer blocks keep their activations instead of being
+    recomputed in backward: the same gradients, faster, for about 1-2 GB of memory per block."""
+    compile_blocks: bool = False
+    """torch.compile every transformer block (bf16 intermediates rounded as in eager). Faster, but no
+    longer bit for bit identical to the eager run; see the README for how far it drifts."""
     cache_size: int = 8
     max_sequence_length: int = 512
     model_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -492,6 +498,8 @@ class ExperimentConfig(ConfigMixin):
             raise ValueError("student.weight_dtype: unsupported dtype")
         if self.student.lora_target not in {"all", "no_self_attn"}:
             raise ValueError("student.lora_target: unsupported target")
+        if self.student.checkpoint_skip_blocks < 0:
+            raise ValueError("student.checkpoint_skip_blocks must be >= 0")
         if self.student.tune_mode not in {"lora", "full"}:
             raise ValueError("student.tune_mode: expected 'lora' or 'full'")
         if self.student.tune_mode == "full" and self.student.lora_path:

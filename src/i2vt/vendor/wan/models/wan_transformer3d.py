@@ -1029,8 +1029,12 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 else:
                     self.teacache.previous_residual_uncond = x.cpu() - ori_x if self.teacache.offload else x - ori_x
         else:
-            for block in self.blocks:
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
+            # The last skip blocks keep their activations instead of recomputing them in backward:
+            # the same gradients for more memory. I2VT_CKPT_SKIP_BLOCKS=0 checkpoints every block.
+            skip = int(os.environ.get("I2VT_CKPT_SKIP_BLOCKS", "0"))
+            first_kept = len(self.blocks) - max(0, skip)
+            for block_idx, block in enumerate(self.blocks):
+                if torch.is_grad_enabled() and self.gradient_checkpointing and block_idx < first_kept:
 
                     def create_custom_forward(module):
                         def custom_forward(*inputs):

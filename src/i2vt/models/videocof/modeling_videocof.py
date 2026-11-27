@@ -11,6 +11,7 @@ from PIL import Image
 from transformers import AutoTokenizer
 
 from i2vt.models.modeling_utils import (
+    maybe_compile_blocks,
     DistillationStep,
     StudentBackend,
 )
@@ -148,6 +149,7 @@ class VideoCoFStudentBackend(StudentBackend):
         # weight_dtype.
         self.network.to(device=device, dtype=torch.float32)
         self.network.train()
+        maybe_compile_blocks(self.transformer)
         self.cache_size = max(0, int(getattr(config, "cache_size", 8)))
         cache_root = getattr(config, "cache_dir", None)
         self._cache = InMemoryDiskCache(

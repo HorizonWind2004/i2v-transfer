@@ -178,11 +178,14 @@ recipe, but training is much slower:
 | Hardware | Time per step (48 samples) | 200 steps |
 |---|---|---|
 | 4 × B300, I2VT-CoF, our runs | about 80 s | about 4.5 hours |
-| 2 × A100 80 GB, I2VT-14B or I2VT-CoF (1 student + 1 teacher) | about 20 minutes | **about 60–65 hours** |
-| 4 × A100 80 GB (2 students + 2 teachers) | about 10 minutes, estimated | about 30–35 hours, estimated |
+| 2 × A100 80 GB, I2VT-14B (1 student + 1 teacher) | about 12 minutes | **about 40 hours** |
+| 2 × A100 80 GB, I2VT-CoF (1 student + 1 teacher) | about 15 minutes | **about 50 hours** |
+| 4 × A100 80 GB (2 students + 2 teachers) | about half of the above, estimated | about 20–25 hours, estimated |
 
-The A100 times come from short test runs (0.04 samples/s per student) and the four-card row is
-extrapolated from them, not measured.
+The A100 times are measured on short runs of the A100 configs (0.067 samples/s for I2VT-14B and
+0.054 for I2VT-CoF per student); the four-card row is extrapolated, not measured. The A100 configs
+include the speed-ups described below, which made the A100 path 1.29× (I2VT-14B) and 1.37×
+(I2VT-CoF) faster than our first A100 runs.
 
 | Cards | Config | Students + teachers | Accumulation | Status |
 |---|---|---|---|---|
@@ -201,6 +204,23 @@ i2vt configs/train/a100/i2vt-cof-2gpu.yaml    # I2VT-CoF on two A100s
 The effective batch stays 48 in every row: `len(student_gpus) × gradient_accumulation_steps`.
 The teacher servers listen on `127.0.0.1`, ports 29600 and up (`teacher.host`, `teacher.ports`);
 change the ports if they are taken. Their logs are in `outputs/<name>/teacher_logs/`.
+
+Speed-ups in the A100 configs (found with [ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent)'s
+profile → change one hotspot → time → check loop):
+
+| Change | Where | Result |
+|---|---|---|
+| LoRA forward without the redundant fp32 cast and the two elementwise multiplies | always on (`I2VT_FAST_LORA=0` turns it off) | bit for bit identical |
+| Teacher request copies leave the GPU without blocking the training thread | always on, RPC only | bit for bit identical |
+| `student.checkpoint_skip_blocks`: the last N blocks are not recomputed in backward | CoF: 4 | bit for bit identical, more memory |
+| `train.rollout.chunk_size: 4`: more rollout steps in flight, so the teacher waits less | CoF | bit for bit identical, more memory |
+| `student.compile_blocks`: `torch.compile` on every transformer block | CoF and 14B | not bit for bit identical (see below) |
+
+With `compile_blocks`, a 20-step run of I2VT-CoF drifts from the eager run by as much as two eager runs
+drift from each other (mean per-step loss difference 1.1% vs 0.9%; LoRA weights 0.15% vs 0.12%). For
+I2VT-14B the drift is measurably larger than that noise: per-step losses differ by 2.0% on average
+(0.3% between two eager runs), most of it in steps 3–6, and the LoRA weights by 0.17% vs 0.11%. Turn
+it off (`compile_blocks: false`) if you need the eager numerics; I2VT-14B is then about 1.2× slower.
 
 Notes from the A100 runs:
 
@@ -255,4 +275,5 @@ I2VT builds on [Bernini](https://github.com/bytedance/Bernini),
 [JoyAI-Image-Edit](https://github.com/jd-opensource/JoyAI-Image) and
 [OpenVE](https://github.com/OpenVE-Team/OpenVE-3M). IVEBench numbers use the official
 [IVEBench](https://github.com/RyanChenYN/IVEBench) code. We thank the authors for releasing their
-work.
+work. The A100 training speed-ups were found with
+[ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent) by DAGroup-PKU.
