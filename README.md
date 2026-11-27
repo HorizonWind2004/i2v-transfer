@@ -8,6 +8,7 @@
 [![Dataset](https://img.shields.io/badge/I2VT--17K-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/datasets/sanaka87/I2VT-17K)
 [![Benchmark](https://img.shields.io/badge/OpenVE++-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/datasets/sanaka87/OpenVEPP-Bench)
 [![Demo](https://img.shields.io/badge/Demo_(I2VT--CoF)-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/spaces/sanaka87/I2VT-CoF)
+[![Papers with Code: SOTA on IVEBench (Short)](https://paperswithcode.co/api/v1/papers/2611.34941/leaderboard-badge.svg?eval=51018&live=1)](https://paperswithcode.co/api/v1/papers/2611.34941/leaderboard-badge-link?eval=51018)
 
 </div>
 
