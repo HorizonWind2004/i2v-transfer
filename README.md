@@ -164,77 +164,27 @@ GPUs. [configs/README.md](configs/README.md) describes the three configs.
 
 #### Hardware
 
-**If you have B300 (288 GB) cards**, use the configs in `configs/train/` as they are. They put a
-student rank and its own copy of the JoyAI-Image-Edit teacher on every GPU, which is how the
-released models were trained.
+**With B300 (288 GB):** use `configs/train/` as is; this is how the released models were trained.
 
-**Without B300**, use the configs in [`configs/train/a100/`](configs/train/a100), made for A100
-(80 GB). An A100 cannot hold a student and the teacher together, so the teacher runs on separate
-GPUs as a small TCP server (`runtime.teacher_gpus`) and the student ranks call it for the teacher
-velocity at every rollout step. `i2vt <config>` starts the teacher servers, waits until they accept
-connections and then starts training; nothing else has to be launched. The result is the same
-recipe, but training is much slower:
+**With A100 (80 GB):** use [`configs/train/a100/`](configs/train/a100). The teacher runs on its own
+GPUs and `i2vt <config>` starts it for you. Same recipe, slower:
 
-| Hardware | Time per step (48 samples) | 200 steps |
-|---|---|---|
-| 4 × B300, I2VT-CoF, our runs | about 80 s | about 4.5 hours |
-| 2 × A100 80 GB, I2VT-14B (1 student + 1 teacher) | about 12 minutes | **about 40 hours** |
-| 2 × A100 80 GB, I2VT-CoF (1 student + 1 teacher) | about 15 minutes | **about 50 hours** |
-| 4 × A100 80 GB (2 students + 2 teachers) | about half of the above, estimated | about 20–25 hours, estimated |
-
-The A100 times are measured on short runs of the A100 configs (0.067 samples/s for I2VT-14B and
-0.054 for I2VT-CoF per student); the four-card row is extrapolated, not measured. The A100 configs
-include the speed-ups described below, which made the A100 path 1.29× (I2VT-14B) and 1.37×
-(I2VT-CoF) faster than our first A100 runs.
-
-| Cards | Config | Students + teachers | Accumulation | Status |
-|---|---|---|---|---|
-| B300, 2 | `i2vt-14b.yaml`, `i2vt-cof.yaml` | 2 + 2, on the same cards | 24 | |
-| B300, 3 | `i2vt-1.3b.yaml` | 3 + 3, on the same cards | 16 | |
-| A100 80 GB, 2 | `a100/i2vt-14b-2gpu.yaml`, `a100/i2vt-cof-2gpu.yaml` | 1 + 1 | 48 | smoke-tested: 2 optimizer steps, checkpoint saved |
-| A100 80 GB, 4 | `a100/i2vt-14b-4gpu.yaml` | 2 + 2 | 24 | not tested yet |
-| A100 80 GB, 4 | `a100/i2vt-cof-4gpu.yaml` | 2 + 2 | 24 | not tested yet |
-| A100 80 GB, 4 | `a100/i2vt-1.3b-4gpu.yaml` | 3 + 1 | 16 | not tested yet |
+| Hardware | Config | Per step (48 samples) | 200 steps |
+|---|---|---|---|
+| 4 × B300 | `i2vt-cof.yaml` | ~80 s | ~4.5 h |
+| 2 × A100 | `a100/i2vt-14b-2gpu.yaml` | ~12 min | ~40 h |
+| 2 × A100 | `a100/i2vt-cof-2gpu.yaml` | ~15 min | ~50 h |
+| 4 × A100 | `a100/*-4gpu.yaml` | ~half, untested | ~20–25 h, untested |
 
 ```bash
-i2vt configs/train/a100/i2vt-14b-2gpu.yaml    # I2VT-14B on two A100s
-i2vt configs/train/a100/i2vt-cof-2gpu.yaml    # I2VT-CoF on two A100s
+i2vt configs/train/a100/i2vt-14b-2gpu.yaml
 ```
 
-The effective batch stays 48 in every row: `len(student_gpus) × gradient_accumulation_steps`.
-The teacher servers listen on `127.0.0.1`, ports 29600 and up (`teacher.host`, `teacher.ports`);
-change the ports if they are taken. Their logs are in `outputs/<name>/teacher_logs/`.
-
-Speed-ups in the A100 configs (found with [ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent)'s
-profile → change one hotspot → time → check loop):
-
-| Change | Where | Result |
-|---|---|---|
-| LoRA forward without the redundant fp32 cast and the two elementwise multiplies | always on (`I2VT_FAST_LORA=0` turns it off) | bit for bit identical |
-| Teacher request copies leave the GPU without blocking the training thread | always on, RPC only | bit for bit identical |
-| `student.checkpoint_skip_blocks`: the last N blocks are not recomputed in backward | CoF: 4 | bit for bit identical, more memory |
-| `train.rollout.chunk_size: 4`: more rollout steps in flight, so the teacher waits less | CoF | bit for bit identical, more memory |
-| `student.compile_blocks`: `torch.compile` on every transformer block | CoF and 14B | not bit for bit identical (see below) |
-
-With `compile_blocks`, a 20-step run of I2VT-CoF drifts from the eager run by as much as two eager runs
-drift from each other (mean per-step loss difference 1.1% vs 0.9%; LoRA weights 0.15% vs 0.12%). For
-I2VT-14B the drift is measurably larger than that noise: per-step losses differ by 2.0% on average
-(0.3% between two eager runs), most of it in steps 3–6, and the LoRA weights by 0.17% vs 0.11%. Turn
-it off (`compile_blocks: false`) if you need the eager numerics; I2VT-14B is then about 1.2× slower.
-
-Notes from the A100 runs:
-
-- **I2VT-14B on an A100 80 GB needs `train.offload_optimizer: true`**, which the A100 configs set. The
-  student holds both Bernini-R experts, and without it the AdamW state tips the card over 80 GB
-  when the optimizer is created. With it, the fp32 AdamW runs on the CPU (the same update, a few
-  seconds per optimizer step, about 20 GB of host memory) and the GPU keeps only the weights and
-  gradients.
-- The A100 I2VT-CoF configs turn on `student.gradient_checkpointing`; a 14B student without it
-  runs out of memory in the first rollout.
-- I2VT-CoF needs the full `Wan2.1-T2V-14B` download, transformer shards included (about 65 GB). The
-  T5/VAE-only subset suggested above is enough for the Bernini models but not for CoF. The
-  `Bernini-R-Diffusers` download for I2VT-14B is about 107 GB.
-- Tested with Python 3.10. On Python 3.14 the data loader fails to start its workers.
+Notes:
+- I2VT-CoF needs the full `Wan2.1-T2V-14B` download (~65 GB); `Bernini-R-Diffusers` is ~107 GB.
+- The A100 configs use `torch.compile` (`student.compile_blocks`). It is not bit for bit identical to
+  eager; set it to `false` for eager numerics (I2VT-14B is then ~1.2× slower).
+- Tested with Python 3.10.
 
 ## Benchmark
 
