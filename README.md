@@ -211,6 +211,16 @@ training data. `--bench openve_pp` evaluates all four groups.
       primaryClass={cs.CV},
       url={https://arxiv.org/abs/2611.34941}, 
 }
+
+@misc{he2025openve,
+      title={{OpenVE-3M}: A Large-Scale High-Quality Dataset for Instruction-Guided Video Editing},
+      author={Haoyang He and Jie Wang and Jiangning Zhang and Zhucun Xue and Xingyuan Bu and Qiangpeng Yang and Shilei Wen and Lei Xie},
+      year={2025},
+      eprint={2512.07826},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2512.07826}
+}
 ```
 
 ## License
