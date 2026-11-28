@@ -130,22 +130,43 @@ editor without the LoRA. The script writes `gen_<name>.mp4` and a side-by-side
 
 ### Evaluation
 
-`--mode eval` edits every benchmark clip and scores the edits with Gemini, so set
-`GEMINI_API_KEY` first. Each benchmark uses the judge of the table above: Gemini 2.5 Pro
-(`gemini-2.5-pro`) for OpenVE-Bench and Gemini 3.8 Flash (`gemini-3.8-flash`) for
-OpenVE++. `--judge <model>` picks another one.
+`--mode eval` edits the benchmark clips and scores them with Gemini. Set
+`GEMINI_API_KEY` first. The examples below explicitly select Gemini 3.8 Flash.
+
+> [!WARNING]
+> Starting December 1, 2026, Google will [route Gemini Developer API requests for
+> `gemini-2.5-pro` to `gemini-3.8-flash`](https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models).
+> The scorer records the requested judge ID, so a request using the old ID can
+> still appear as 2.5 Pro in the score file. The published OpenVE-Bench scores
+> used Gemini 2.5 Pro. Treat new 3.8 Flash scores as a separate evaluation:
+> use an output directory with no scores from another judge, and do not resume
+> old 2.5 Pro scoring across the cutoff. The summary script reads all score
+> JSONL files in the directory.
 
 ```bash
 export GEMINI_API_KEY=...
-CKPT=$I2V_ASSET_ROOT/checkpoints/i2vt-1.3b/bernini_lora_step_200.safetensors
-i2vt configs/train/i2vt-1.3b.yaml --mode eval --checkpoint $CKPT --bench openve      # OpenVE-Bench
-i2vt configs/train/i2vt-1.3b.yaml --mode eval --checkpoint $CKPT --bench openve_pp   # OpenVE++
+CKPT="$I2V_ASSET_ROOT/checkpoints/i2vt-1.3b/bernini_lora_step_200.safetensors"
 ```
 
-The other two models take their own config and LoRA. Videos and score files go to
-`outputs/inference/<model>/<bench>/`, and the benchmarks are downloaded from the Hub on first use.
-`python scripts/summarize_scores.py --run NAME=outputs/inference/<model>/<bench>` averages the
-scores of one or more runs.
+**OpenVE-Bench**
+
+```bash
+i2vt configs/train/i2vt-1.3b.yaml --mode eval --checkpoint "$CKPT" \
+  --bench openve --judge gemini-3.8-flash
+python scripts/summarize_scores.py --run I2VT-1.3B=outputs/inference/i2vt-1.3b/openve
+```
+
+**OpenVE++**
+
+```bash
+i2vt configs/train/i2vt-1.3b.yaml --mode eval --checkpoint "$CKPT" \
+  --bench openve_pp --judge gemini-3.8-flash
+python scripts/summarize_scores.py --run I2VT-1.3B=outputs/inference/i2vt-1.3b/openve_pp
+```
+
+For the other two models, use their corresponding config and LoRA. Videos and score
+files go to `outputs/inference/<model>/<bench>/` by default, and the benchmarks are
+downloaded from the Hub on first use.
 
 ### Training
 
